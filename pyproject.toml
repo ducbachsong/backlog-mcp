@@ -1,0 +1,17 @@
+[project]
+name = "backlog-mcp"
+version = "0.1.0"
+description = "MCP server exposing Backlog project management tools for Claude Desktop"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp[cli]>=1.0.0",
+    "requests>=2.31.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+backlog-mcp = "server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
