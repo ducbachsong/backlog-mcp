@@ -1,16 +1,39 @@
+"""Dynamically build source registry from environment variables.
+
+Pattern — declare a new Backlog space by adding three env vars:
+  BACKLOG_API_KEY_<NAME>=...
+  BACKLOG_HOST_<NAME>=...
+  PROJECT_KEY_<NAME>=...
+
+<NAME> becomes the source identifier (lowercased). Any number of spaces.
+Set DEFAULT_SOURCE=<name> to control which source is used when source="" is passed.
+"""
+
 import os
+import re
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# ── YST Backlog (source project) ──────────────────────────────────────────────
-BACKLOG_API_KEY_YST: str = os.environ.get("BACKLOG_API_KEY_YST", "")
-BACKLOG_HOST_YST: str = os.environ.get("BACKLOG_HOST_YST", "keieikika.backlog.com")
-BACKLOG_BASE_URL_YST: str = f"https://{BACKLOG_HOST_YST}/api/v2"
-PROJECT_KEY_YST: str = os.environ.get("PROJECT_KEY_YST", "KANTAKIWIZKEIZOKUKAIHATSU")
 
-# ── VTI Backlog (optional second project) ─────────────────────────────────────
-BACKLOG_API_KEY_VTI: str = os.environ.get("BACKLOG_API_KEY_VTI", "")
-BACKLOG_HOST_VTI: str = os.environ.get("BACKLOG_HOST_VTI", "vti-corp.backlog.com")
-BACKLOG_BASE_URL_VTI: str = f"https://{BACKLOG_HOST_VTI}/api/v2"
-PROJECT_KEY_VTI: str = os.environ.get("PROJECT_KEY_VTI", "YST_KANTAKI_WIZ")
+def _build_sources() -> dict[str, dict]:
+    sources: dict[str, dict] = {}
+    for key, val in os.environ.items():
+        m = re.match(r"^BACKLOG_API_KEY_([A-Z0-9_]+)$", key)
+        if m and val.strip():
+            suffix = m.group(1)
+            name = suffix.lower()
+            host = os.environ.get(f"BACKLOG_HOST_{suffix}", "").strip()
+            project_key = os.environ.get(f"PROJECT_KEY_{suffix}", "").strip()
+            if host:
+                sources[name] = {
+                    "api_key":     val.strip(),
+                    "base_url":    f"https://{host}/api/v2",
+                    "project_key": project_key,
+                    "host":        host,
+                }
+    return sources
+
+
+SOURCES: dict[str, dict] = _build_sources()
+DEFAULT_SOURCE: str = os.environ.get("DEFAULT_SOURCE", next(iter(SOURCES), "")).lower()
