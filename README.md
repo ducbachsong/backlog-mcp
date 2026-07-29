@@ -38,7 +38,7 @@ Get your API key from Backlog under **Personal Settings → API**.
 
 ### 3. Register with Claude Desktop
 
-Add the server to your `claude_desktop_config.json`:
+Copy [`claude_desktop_config.example.json`](claude_desktop_config.example.json) to your Claude Desktop config location, fill in the real `command`/`args` paths and credentials, and merge it into your existing `mcpServers` block if you already have other servers configured:
 
 ```json
 {
@@ -56,7 +56,7 @@ Add the server to your `claude_desktop_config.json`:
 }
 ```
 
-This file is machine-specific and contains live credentials — keep it out of version control (already covered by `.gitignore`).
+Your filled-in `claude_desktop_config.json` is machine-specific and contains live credentials — keep it out of version control (already covered by `.gitignore`).
 
 ## Tools
 

@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "backlog": {
+      "command": "/path/to/backlog-mcp/.venv/Scripts/python.exe",
+      "args": ["/path/to/backlog-mcp/server.py"],
+      "env": {
+        "BACKLOG_API_KEY_SPACE1": "your_space1_api_key_here",
+        "BACKLOG_HOST_SPACE1": "your-space1.backlog.com",
+        "PROJECT_KEY_SPACE1": "YOUR_PROJECT_KEY",
+
+        "BACKLOG_API_KEY_SPACE2": "your_space2_api_key_here",
+        "BACKLOG_HOST_SPACE2": "your-space2.backlog.com",
+        "PROJECT_KEY_SPACE2": "YOUR_OTHER_PROJECT_KEY",
+
+        "DEFAULT_SOURCE": "space1"
+      }
+    }
+  }
+}
