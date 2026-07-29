@@ -7,20 +7,25 @@ import requests
 
 import config
 
-# ── Base URLs / API keys ──────────────────────────────────────────────────────
 
-_BASE_URLS = {
-    "yst": config.BACKLOG_BASE_URL_YST,
-    "vti": config.BACKLOG_BASE_URL_VTI,
-}
-_API_KEYS = {
-    "yst": config.BACKLOG_API_KEY_YST,
-    "vti": config.BACKLOG_API_KEY_VTI,
-}
-_PROJECT_KEYS = {
-    "yst": config.PROJECT_KEY_YST,
-    "vti": config.PROJECT_KEY_VTI,
-}
+# ── Source resolution ─────────────────────────────────────────────────────────
+
+def _src(source: str) -> dict:
+    """Resolve source name → config dict. Empty string uses DEFAULT_SOURCE."""
+    name = (source or "").strip() or config.DEFAULT_SOURCE
+    cfg = config.SOURCES.get(name)
+    if not cfg:
+        available = list(config.SOURCES.keys())
+        raise ValueError(f"Source '{name}' not configured. Available: {available}")
+    return cfg
+
+
+def available_sources() -> list[str]:
+    return list(config.SOURCES.keys())
+
+
+def project_key(source: str) -> str:
+    return _src(source)["project_key"]
 
 
 # ── HTTP helpers ──────────────────────────────────────────────────────────────
@@ -34,7 +39,7 @@ def _request(method: str, url: str, **kwargs) -> requests.Response:
                 continue
             r.raise_for_status()
             return r
-        except requests.exceptions.Timeout:
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
             if attempt == 2:
                 raise
             time.sleep(1)
@@ -42,33 +47,37 @@ def _request(method: str, url: str, **kwargs) -> requests.Response:
 
 
 def _get(source: str, endpoint: str, params: dict = None, list_params: dict = None) -> any:
-    key = _API_KEYS.get(source)
-    if not key:
-        raise ValueError(f"API key not configured for source '{source}'")
-    p = list((params or {}).items()) + [("apiKey", key)]
+    cfg = _src(source)
+    p = list((params or {}).items()) + [("apiKey", cfg["api_key"])]
     for k, vals in (list_params or {}).items():
         for v in (vals if isinstance(vals, list) else [vals]):
             p.append((k, v))
-    return _request("GET", f"{_BASE_URLS[source]}{endpoint}", params=p).json()
+    return _request("GET", f"{cfg['base_url']}{endpoint}", params=p).json()
 
 
 def _post(source: str, endpoint: str, data: dict = None, files=None, extra_params: list = None) -> any:
-    p = (extra_params or []) + [("apiKey", _API_KEYS[source])]
-    return _request("POST", f"{_BASE_URLS[source]}{endpoint}", params=p, data=data, files=files).json()
+    cfg = _src(source)
+    p = (extra_params or []) + [("apiKey", cfg["api_key"])]
+    return _request("POST", f"{cfg['base_url']}{endpoint}", params=p, data=data, files=files).json()
 
 
 def _patch(source: str, endpoint: str, data: dict = None, extra_params: list = None) -> any:
-    p = (extra_params or []) + [("apiKey", _API_KEYS[source])]
-    return _request("PATCH", f"{_BASE_URLS[source]}{endpoint}", params=p, data=data).json()
+    cfg = _src(source)
+    p = (extra_params or []) + [("apiKey", cfg["api_key"])]
+    return _request("PATCH", f"{cfg['base_url']}{endpoint}", params=p, data=data).json()
 
 
-def _delete(source: str, endpoint: str) -> any:
-    return _request("DELETE", f"{_BASE_URLS[source]}{endpoint}",
-                    params=[("apiKey", _API_KEYS[source])]).json()
+def _delete(source: str, endpoint: str, params: dict = None) -> any:
+    cfg = _src(source)
+    p = list((params or {}).items()) + [("apiKey", cfg["api_key"])]
+    return _request("DELETE", f"{cfg['base_url']}{endpoint}", params=p).json()
 
 
-def project_key(source: str) -> str:
-    return _PROJECT_KEYS.get(source, "")
+def _get_raw(source: str, endpoint: str) -> tuple[bytes, str]:
+    """Download binary content without JSON parsing. Returns (bytes, content_type)."""
+    cfg = _src(source)
+    r = _request("GET", f"{cfg['base_url']}{endpoint}", params=[("apiKey", cfg["api_key"])])
+    return r.content, r.headers.get("Content-Type", "application/octet-stream")
 
 
 # ── Session metadata cache ────────────────────────────────────────────────────
@@ -110,6 +119,45 @@ def slim_comment(c: dict) -> dict:
         "author":  (c.get("createdUser") or {}).get("name", ""),
         "created": (c.get("created") or "")[:16],
         "content": (c.get("content") or "")[:300],
+    }
+
+
+def slim_wiki(w: dict) -> dict:
+    content = w.get("content") or ""
+    return {
+        "id":          w.get("id"),
+        "name":        w.get("name"),
+        "tags":        [t.get("name") for t in (w.get("tags") or [])],
+        "content":     content[:500] if content else "",
+        "createdUser": (w.get("createdUser") or {}).get("name"),
+        "created":     w.get("created"),
+        "updated":     w.get("updated"),
+    }
+
+
+def slim_activity(a: dict) -> dict:
+    content = a.get("content") or {}
+    summary = content.get("summary") or content.get("key_id") or ""
+    return {
+        "id":          a.get("id"),
+        "type":        a.get("type"),
+        "project":     (a.get("project") or {}).get("projectKey", ""),
+        "summary":     str(summary)[:100],
+        "createdUser": (a.get("createdUser") or {}).get("name", ""),
+        "created":     a.get("created"),
+    }
+
+
+def slim_notification(n: dict) -> dict:
+    issue = n.get("issue") or {}
+    return {
+        "id":           n.get("id"),
+        "alreadyRead":  n.get("alreadyRead"),
+        "reason":       n.get("reason"),
+        "issueKey":     issue.get("issueKey", ""),
+        "issueSummary": issue.get("summary", ""),
+        "sender":       (n.get("sender") or {}).get("name", ""),
+        "created":      n.get("created"),
     }
 
 
