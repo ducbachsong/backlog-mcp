@@ -4,10 +4,12 @@ An [MCP](https://modelcontextprotocol.io) server that exposes [Backlog](https://
 
 ## Features
 
-- **61 tools** covering issues, comments, wiki, categories, issue types, milestones, custom fields, attachments, activity feeds, notifications, watchers, and stars.
+- **21 tools** covering issues, comments, wiki, categories, issue types, milestones, custom fields, attachments, activity feeds, notifications, watchers, and stars. Tools are grouped by subject with a `kind`/`action` selector rather than split one-per-endpoint, so there is less schema for the model to scan.
 - **Multi-space support** — configure any number of Backlog spaces (e.g. separate client/company instances) and target them by name per tool call, without restarting or reconfiguring.
-- **Real mentions** — `add_comment_with_mention` posts a comment that renders as a highlighted `@Name` mention *and* triggers a real Backlog notification (bell + email), matching what you get from typing `@` in the Backlog UI. Plain `@Name` text (including from `add_comment`) does neither.
-- Parallel fetching for bulk operations (`get_issues_by_keys`, `get_recent_comments_bulk`, `bulk_update_issue_status`).
+- **One request per change** — `update_issues` and `add_comment` send every field change *plus* the comment *plus* the mention notification in a single PATCH, so Backlog's 課題の変更履歴 gets one entry instead of one per field.
+- **Full ticket field coverage** — 状態 / 担当者 / 優先度 / 種別 / マイルストーン / カテゴリー / 発生バージョン / 開始日 / 期限日 / 予定時間 / 実績時間 / 完了理由, each settable by display name *or* numeric id ('Closed', 'clos' and '4' all work), with a `clear_fields` argument to blank them out.
+- **Real mentions** — passing `mention_user_ids` posts a comment that renders as a highlighted `@Name` mention *and* triggers a real Backlog notification (bell + email), matching what you get from typing `@` in the Backlog UI. Plain `@Name` text does neither.
+- Parallel fetching and updating for bulk operations (`get_issue`, `get_comments`, `update_issues`, `delete_issue` all accept a list of keys).
 - Read-only tools require no confirmation; every create/update/delete tool is marked in its docstring for the client to confirm with the user before calling.
 
 ## Setup
@@ -61,40 +63,88 @@ Your filled-in `claude_desktop_config.json` is machine-specific and contains liv
 ## Tools
 
 ### Discovery & metadata
-`get_sources`, `get_project`, `get_project_statuses`, `get_project_users`, `get_issue_types`, `get_categories`, `get_milestones`, `get_priorities`
+- `get_sources` — list the configured Backlog spaces.
+- `get_project_metadata` — one call for every lookup list: `project`, `statuses`, `users`, `issue_types`, `categories`, `milestones`, `versions`, `priorities`, `resolutions`, `custom_fields`, plus space-level `projects` and `myself`. Cached per server run, so `kinds='all'` is cheap.
 
 ### Issues
-`get_issues`, `get_issue`, `get_issues_by_keys`, `get_parent_issue`, `get_child_issues`, `get_issue_count`, `create_issue`, `update_issue`, `delete_issue`, `bulk_update_issue_status`
+- `get_issues` — search/filter; `count_only=True` returns just the match count.
+- `get_issue` — one or many keys, fetched in parallel; `full=False` for slim records.
+- `get_related_issues` — parent, children, or both.
+- `get_recently_viewed` — recently viewed issues or wikis.
+- `create_issue` — create with every field set at once.
+- `update_issues` — **the write tool.** One or many keys; sets any combination of 状態 / 担当者 / 優先度 / 種別 / 完了理由 / マイルストーン / カテゴリー / 発生バージョン / 開始日 / 期限日 / 予定時間 / 実績時間, plus `summary`, `description`, `parent_issue_id`, a `comment`, `mention_user_ids` and `clear_fields` — all in a single request per issue.
+- `delete_issue` — one or many keys.
 
 ### Comments
-`get_issue_comments`, `get_recent_comments_bulk`, `add_comment`, `add_comment_with_mention`, `update_comment`, `delete_comment`
+- `get_comments` — one or many issues; `last_n=0` for the full thread, `last_n=N` for the newest N (slimmed).
+- `add_comment` — comment + optional mention + optional field changes, all in one request.
+- `manage_comment` — `action='update'` or `'delete'`.
 
 ### Attachments
-`get_issue_attachments`, `download_issue_attachment`, `get_wiki_attachments`, `download_wiki_attachment` — images are returned inline, text files as text, other binaries as base64.
+- `get_attachments` — lists an issue's or wiki page's attachments; pass `attachment_id` to download one. Images come back inline, text files as text, other binaries as base64.
 
 ### Project admin
-Categories: `add_category`, `update_category`, `delete_category`
-Issue types: `add_issue_type`, `update_issue_type`, `delete_issue_type`
-Milestones: `add_milestone`, `update_milestone`, `delete_milestone`
-Custom fields: `get_custom_fields`, `add_custom_field`, `update_custom_field`, `delete_custom_field`
+- `manage_project_setting` — `kind` of `category` / `issue_type` / `milestone` / `custom_field` × `action` of `add` / `update` / `delete`. Clears the metadata cache on success.
 
 ### Wiki
-`get_wiki_pages`, `get_wiki_count`, `get_wiki_page`, `create_wiki_page`, `update_wiki_page`, `delete_wiki_page`
+- `get_wikis` — list, read one page (`wiki_id`), or `count_only`.
+- `manage_wiki_page` — `action='create'` / `'update'` / `'delete'`.
 
 ### Activity & notifications
-`get_space_activities`, `get_project_activities`, `get_recently_viewed_issues`, `get_recently_viewed_wikis`, `get_notifications`, `get_notification_count`, `mark_notification_read`, `reset_notification_count`
+- `get_activities` — `scope='project'` or `'space'`.
+- `get_notifications` — list, or `count_only`.
+- `mark_notifications_read` — one notification, or all when `notification_id=0`.
 
 ### Watchers & stars
-`get_issue_watchers`, `add_issue_watcher`, `delete_issue_watcher`, `add_star`
-
-### Space / user
-`get_projects`, `get_my_info`
+- `manage_watchers` — `action='list'` / `'add'` / `'delete'`.
+- `add_star` — star an issue, comment, or wiki page.
 
 ## Project layout
 
-- `server.py` — MCP tool definitions (FastMCP)
-- `backlog_api.py` — HTTP client, pagination, retries, response slimming (not exposed as tools)
-- `config.py` — builds the multi-space source registry from environment variables
+```
+server.py               entry point — Claude Desktop configs point here
+backlog_mcp/
+  config.py             builds the multi-space source registry from env vars
+  app.py                the FastMCP object and process entry point
+  common.py             sentinels shared by tools (default source, "unchanged")
+  fields.py             ticket-field value -> Backlog form body; mention rewriting
+  api/                  everything below the tool definitions
+    secrets.py          API-key redaction (security-critical — read this first)
+    sources.py          source name -> configured Backlog space
+    http.py             the retrying request path all traffic goes through
+    meta.py             project lookup lists, caching, name -> id resolution
+    slim.py             payload trimming
+    issues.py           paginated issue / comment fetching
+    parallel.py         fan-out for multi-key tools
+  tools/                the MCP tools, one module per subject
+    metadata.py         get_sources, get_project_metadata
+    issues.py           get_issues, get_issue, get_related_issues,
+                        create_issue, update_issues, delete_issue
+    comments.py         get_comments, add_comment, manage_comment
+    attachments.py      get_attachments
+    project_settings.py manage_project_setting
+    wiki.py             get_wikis, manage_wiki_page
+    activity.py         get_activities, get_recently_viewed,
+                        get_notifications, mark_notifications_read
+    social.py           manage_watchers, add_star
+```
+
+Each layer only imports the ones above it: `config` → `api/` → `common`/`fields` →
+`app` → `tools/`. Importing `backlog_mcp` registers every tool, because each tool
+module applies `@mcp.tool()` at import time.
+
+**Adding a tool:** put it in the matching `tools/` module (or add a new module and
+list it in `tools/__init__.py`). Reach Backlog through `api.get` / `api.post` /
+`api.patch` / `api.delete` rather than `requests` directly — that request path is
+what keeps the API key out of error messages.
+
+## Security note
+
+Backlog authenticates with a `?apiKey=` query parameter, so the key is part of
+every request URL, and `requests` puts the full URL into its exception messages.
+Those messages reach the MCP client. `api/secrets.py` scrubs the key out of every
+error leaving the HTTP layer — if you add a code path that talks to Backlog
+outside `api/http.py`, scrub it there too.
 
 ## License
 
