@@ -10,7 +10,10 @@ dependencies = [
 ]
 
 [project.scripts]
-backlog-mcp = "server:main"
+backlog-mcp = "backlog_mcp:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["backlog_mcp"]
 
 [build-system]
 requires = ["hatchling"]
