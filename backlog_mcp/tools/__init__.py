@@ -9,6 +9,7 @@ registration, not a convenience.
                         create_issue, update_issues, delete_issue
     comments          — get_comments, add_comment, manage_comment
     attachments       — get_attachments
+    files             — manage_files
     project_settings  — manage_project_setting
     wiki              — get_wikis, manage_wiki_page
     activity          — get_activities, get_recently_viewed,
@@ -21,6 +22,7 @@ from . import (  # noqa: F401  — imported for the @mcp.tool() side effect
     issues,
     comments,
     attachments,
+    files,
     project_settings,
     wiki,
     activity,

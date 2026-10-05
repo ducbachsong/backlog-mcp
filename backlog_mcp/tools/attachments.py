@@ -5,7 +5,7 @@ import base64
 from mcp import types as mcp_types
 
 from ..app import mcp
-from .. import api
+from .. import api, config, stash
 from ..common import D
 
 
@@ -42,26 +42,85 @@ def _decode_attachment(data: bytes, content_type: str):
     }
 
 
+def _save_one(source: str, base: str, att: dict, origin: dict) -> dict:
+    """Download one attachment straight into the stash and return its handle."""
+    if (att.get("size") or 0) > stash.max_file_bytes():
+        return {"error": f"'{att.get('name')}' is larger than the size limit "
+                         "(BACKLOG_MCP_MAX_FILE_MB)"}
+    with api.stream(source, f"{base}/attachments/{att['id']}") as (ct, chunks):
+        entry = stash.write_stream(att.get("name") or f"attachment-{att['id']}", chunks, ct,
+                                   dict(origin, attachmentId=att["id"]))
+    return entry.public()
+
+
 @mcp.tool()
-def get_attachments(target: str, source: str = D, kind: str = "issue", attachment_id: int = 0):
-    """List the files attached to an issue or wiki page, or download one of them.
-    Call once without attachment_id to see what is there, then again with the id.
+def get_attachments(
+    target: str,
+    source: str = D,
+    kind: str = "issue",
+    attachment_id: int = 0,
+    comment_id: int = 0,
+    save: bool = False,
+):
+    """List, view, or save the files attached to an issue or wiki page.
+
+    To copy files to another issue / comment / wiki page, call with save=True:
+    the files are downloaded into the local stash and you get handles ('f1')
+    to pass as `attachments` to add_comment / create_issue / update_issues /
+    manage_wiki_page. The bytes never go through the conversation.
 
     Args:
         target: Issue key (kind='issue', e.g. 'PROJECT-123') or wiki page id
                 (kind='wiki', e.g. '12345').
         source: Source name from get_sources. Empty = default source.
         kind: 'issue' (default) or 'wiki'.
-        attachment_id: 0 (default) = list attachments. Non-zero = download that file.
+        attachment_id: One attachment id. With save=False the file is returned
+                       for viewing; with save=True it is stashed.
+        comment_id: Issue comment id (get_comments shows which comments have
+                    'attachments'). Selects exactly the files that comment
+                    attached — listed with save=False, stashed with save=True.
+        save: False (default) = list / view. True = download into the stash;
+              with neither attachment_id nor comment_id, every file of the target.
 
     Returns:
-        When listing — list of {'id', 'name', 'size', 'created', ...}.
-        When downloading — images come back inline as viewable image content,
-        text files as {'content_type', 'text'}, other binaries as
+        Listing — [{'id', 'name', 'size', 'created', ...}] ([{'id', 'name'}]
+        for a comment).
+        Viewing — images inline as viewable image content, text files as
+        {'content_type', 'text'}, other binaries as
         {'content_type', 'size_bytes', 'data_base64'}.
+        Saving — {'saved': [{'handle', 'name', 'size', 'mime', 'path', 'origin'}],
+        'failures': {attachment id: error}}.
     """
+    if kind not in ("issue", "wiki"):
+        return {"error": f"Unknown kind '{kind}'. Use 'issue' or 'wiki'."}
+    if comment_id and kind != "issue":
+        return {"error": "comment_id only applies to kind='issue'"}
     base = f"/issues/{target}" if kind == "issue" else f"/wikis/{target}"
-    if not attachment_id:
+
+    if not save:
+        if attachment_id:
+            data, ct = api.get_raw(source, f"{base}/attachments/{attachment_id}")
+            return _decode_attachment(data, ct)
+        if comment_id:
+            return api.comment_attachments(api.get(source, f"{base}/comments/{comment_id}"))
         return api.get(source, f"{base}/attachments")
-    data, ct = api.get_raw(source, f"{base}/attachments/{attachment_id}")
-    return _decode_attachment(data, ct)
+
+    listing = {a["id"]: a for a in api.get(source, f"{base}/attachments")}
+    if attachment_id:
+        wanted = [listing.get(attachment_id) or {"id": attachment_id}]
+    elif comment_id:
+        refs = api.comment_attachments(api.get(source, f"{base}/comments/{comment_id}"))
+        wanted = [listing.get(r["id"]) or r for r in refs]
+        if not wanted:
+            return {"saved": [], "failures": {}, "note": f"Comment {comment_id} attached no files"}
+    else:
+        wanted = list(listing.values())
+
+    origin = {"source": source or config.DEFAULT_SOURCE, kind: target}
+    if comment_id:
+        origin["commentId"] = comment_id
+    by_id = {a["id"]: a for a in wanted}
+    results = api.run_parallel(list(by_id), lambda i: _save_one(source, base, by_id[i], origin))
+    saved = [results[i] for i in by_id if "error" not in results[i]]
+    failures = {i: results[i]["error"] for i in by_id if "error" in results[i]}
+    return {"saved": saved, "failures": failures}

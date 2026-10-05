@@ -1,9 +1,9 @@
 """Tools: reading and editing wiki pages."""
 
-from typing import Any
+from typing import Any, Optional
 
 from ..app import mcp
-from .. import api
+from .. import api, attach
 from ..common import D
 
 
@@ -34,6 +34,14 @@ def get_wikis(source: str = D, wiki_id: int = 0, keyword: str = "", count_only: 
     return [api.slim_wiki(p) for p in api.get(source, "/wikis", params)]
 
 
+def _attach_to_wiki(source: str, wiki_id: int, files) -> list:
+    """Link staged files to a wiki page (wikis take files on a separate endpoint)."""
+    if not files:
+        return []
+    ids = attach.upload(source, files)
+    return api.post(source, f"/wikis/{wiki_id}/attachments", {"attachmentId[]": ids})
+
+
 @mcp.tool()
 def manage_wiki_page(
     action: str,
@@ -42,9 +50,12 @@ def manage_wiki_page(
     name: str = "",
     content: str = "",
     mail_notify: bool = False,
+    attachments: Optional[list[str]] = None,
+    embed_images: bool = True,
 ) -> dict:
-    """Create, update or delete a wiki page.
-    ⚠️ CONFIRM WITH USER — show the page name and content first; delete is IRREVERSIBLE.
+    """Create, update or delete a wiki page, optionally attaching files.
+    ⚠️ CONFIRM WITH USER — show the page name, content and files first; delete is
+    IRREVERSIBLE.
 
     Args:
         action: 'create', 'update' or 'delete'.
@@ -54,22 +65,41 @@ def manage_wiki_page(
         content: Page body (Backlog Markdown). Required for create; empty on
                  update = keep current.
         mail_notify: True sends an email notification to project members.
+        attachments: Files to attach (create / update) — stash handles ('f1',
+                     from get_attachments save=True or manage_files) and/or local
+                     file paths inside the upload allowlist. On update, files
+                     alone are enough; name/content may stay empty.
+        embed_images: True (default) = image files not already referenced in
+                      `content` are appended to it as inline images. Has no
+                      effect when content is left unchanged on update.
 
     Returns:
-        dict: the created / updated / deleted wiki page as returned by Backlog,
-        or {'error': message} for an unknown action or a missing argument.
+        dict: the created / updated / deleted wiki page as returned by Backlog
+        (plus 'attached': [file names] when files were given), or
+        {'error': message} for an unknown action, a missing argument or a bad
+        file ref.
     """
     notify = "true" if mail_notify else "false"
+    try:
+        files = attach.prepare(attachments) if action in ("create", "update") else []
+    except ValueError as e:
+        return {"error": str(e)}
+    if files and embed_images and content:
+        content = attach.embed_images(source, content, files)
 
     if action == "create":
         if not name or not content:
             return {"error": "name and content are required for action='create'"}
-        return api.post(source, "/wikis", {
+        page = api.post(source, "/wikis", {
             "projectId":  api.project_id(source),
             "name":       name,
             "content":    content,
             "mailNotify": notify,
         })
+        if files:
+            _attach_to_wiki(source, page["id"], files)
+            page["attached"] = attach.names(files)
+        return page
 
     if not wiki_id:
         return {"error": f"wiki_id is required for action='{action}'"}
@@ -80,9 +110,13 @@ def manage_wiki_page(
             data["name"] = name
         if content:
             data["content"] = content
-        if len(data) == 1:
-            return {"error": "Pass name and/or content to update"}
-        return api.patch(source, f"/wikis/{wiki_id}", data)
+        if len(data) == 1 and not files:
+            return {"error": "Pass name, content and/or attachments to update"}
+        page = api.patch(source, f"/wikis/{wiki_id}", data) if len(data) > 1 else {"id": wiki_id}
+        if files:
+            _attach_to_wiki(source, wiki_id, files)
+            page["attached"] = attach.names(files)
+        return page
 
     if action == "delete":
         return api.delete(source, f"/wikis/{wiki_id}", {"mailNotify": notify})

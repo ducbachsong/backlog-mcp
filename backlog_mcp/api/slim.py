@@ -33,18 +33,42 @@ def slim_issue(issue: dict) -> dict:
     }
 
 
+def comment_attachments(c: dict) -> list[dict]:
+    """List the files a comment attached.
+
+    Backlog stores comment files as issue attachments; the comment only points
+    at them through its changeLog ('attachment' entries carrying
+    attachmentInfo). An entry with an empty newValue records a removal, so it
+    is skipped.
+
+    Input:  c: Raw comment dict from the Backlog API.
+    Output: [{'id', 'name'}] — ids usable with get_attachments.
+    """
+    out = []
+    for ch in c.get("changeLog") or []:
+        info = ch.get("attachmentInfo") or {}
+        if ch.get("field") == "attachment" and info.get("id") and ch.get("newValue"):
+            out.append({"id": info["id"], "name": info.get("name") or ch.get("newValue")})
+    return out
+
+
 def slim_comment(c: dict) -> dict:
     """Reduce a comment to id / author / timestamp / truncated body.
 
     Input:  c: Raw comment dict from the Backlog API.
-    Output: Flat dict; content truncated to 300 characters.
+    Output: Flat dict; content truncated to 300 characters. 'attachments' is
+            present only when the comment attached files.
     """
-    return {
+    out = {
         "id":      c.get("id"),
         "author":  (c.get("createdUser") or {}).get("name", ""),
         "created": (c.get("created") or "")[:16],
         "content": (c.get("content") or "")[:300],
     }
+    files = comment_attachments(c)
+    if files:
+        out["attachments"] = files
+    return out
 
 
 def slim_wiki(w: dict) -> dict:

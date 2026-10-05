@@ -4,11 +4,13 @@ An [MCP](https://modelcontextprotocol.io) server that exposes [Backlog](https://
 
 ## Features
 
-- **21 tools** covering issues, comments, wiki, categories, issue types, milestones, custom fields, attachments, activity feeds, notifications, watchers, and stars. Tools are grouped by subject with a `kind`/`action` selector rather than split one-per-endpoint, so there is less schema for the model to scan.
+- **22 tools** covering issues, comments, wiki, categories, issue types, milestones, custom fields, attachments, activity feeds, notifications, watchers, and stars. Tools are grouped by subject with a `kind`/`action` selector rather than split one-per-endpoint, so there is less schema for the model to scan.
 - **Multi-space support** — configure any number of Backlog spaces (e.g. separate client/company instances) and target them by name per tool call, without restarting or reconfiguring.
 - **One request per change** — `update_issues` and `add_comment` send every field change *plus* the comment *plus* the mention notification in a single PATCH, so Backlog's 課題の変更履歴 gets one entry instead of one per field.
 - **Full ticket field coverage** — 状態 / 担当者 / 優先度 / 種別 / マイルストーン / カテゴリー / 発生バージョン / 開始日 / 期限日 / 予定時間 / 実績時間 / 完了理由, each settable by display name *or* numeric id ('Closed', 'clos' and '4' all work), with a `clear_fields` argument to blank them out.
 - **Real mentions** — passing `mention_user_ids` posts a comment that renders as a highlighted `@Name` mention *and* triggers a real Backlog notification (bell + email), matching what you get from typing `@` in the Backlog UI. Plain `@Name` text does neither.
+- **Attachments on every write** — `add_comment`, `create_issue`, `update_issues` and `manage_wiki_page` take `attachments=[...]`; files go up in the same request as the rest of the change, and images are referenced inline so they show in the body, not just the file list.
+- **Local file stash** — files read from Backlog, fetched from the web, or written by Claude are kept in a per-session temp folder under short handles (`f1`, `f2`…). Copying a comment with its screenshots to another ticket — even in another space — never pushes the image bytes through the conversation.
 - Parallel fetching and updating for bulk operations (`get_issue`, `get_comments`, `update_issues`, `delete_issue` all accept a list of keys).
 - Read-only tools require no confirmation; every create/update/delete tool is marked in its docstring for the client to confirm with the user before calling.
 
@@ -37,6 +39,15 @@ PROJECT_KEY_<NAME>=...
 `<NAME>` (lowercased) becomes the `source` argument you pass to tools. Add as many spaces as you need by repeating the pattern with a different `<NAME>`. Optionally set `DEFAULT_SOURCE=<name>` to control which space is used when `source` is omitted — otherwise the first configured space is used.
 
 Get your API key from Backlog under **Personal Settings → API**.
+
+Optional file-handling settings (all have sensible defaults):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `BACKLOG_MCP_UPLOAD_DIRS` | your Downloads and Desktop | Folders local files may be attached from, separated by `;` on Windows (`:` elsewhere). The stash folder is always allowed. |
+| `BACKLOG_MCP_TEMP_DIR` | `<system temp>/backlog-mcp` | Where the stash lives. |
+| `BACKLOG_MCP_MAX_FILE_MB` | `50` | Largest single file that can be stashed or uploaded. |
+| `BACKLOG_MCP_STASH_MAX_MB` | `500` | Total stash size. |
 
 ### 3. Register with Claude Desktop
 
@@ -77,11 +88,26 @@ Your filled-in `claude_desktop_config.json` is machine-specific and contains liv
 
 ### Comments
 - `get_comments` — one or many issues; `last_n=0` for the full thread, `last_n=N` for the newest N (slimmed).
-- `add_comment` — comment + optional mention + optional field changes, all in one request.
+- `add_comment` — comment + optional mention + optional field changes + attached files, all in one request.
 - `manage_comment` — `action='update'` or `'delete'`.
 
-### Attachments
-- `get_attachments` — lists an issue's or wiki page's attachments; pass `attachment_id` to download one. Images come back inline, text files as text, other binaries as base64.
+### Attachments & files
+- `get_attachments` — lists an issue's or wiki page's attachments (or just one comment's, with `comment_id`); pass `attachment_id` to view one inline. `save=True` downloads into the stash and returns handles instead.
+- `manage_files` — the stash: `list`, `add` (from an allowlisted local `path`, a public `url`, model-written `text`, or `data_base64`), `view`, `remove`, `clear`, and `list_dir` to find what the user just saved to Downloads/Desktop.
+
+`get_comments` marks every comment that attached files with `attachments: [{id, name}]`.
+
+**Copying a comment with its images to another ticket:**
+
+```
+get_comments(['A-1'])                                  → comment 123 has [bug.png]
+get_attachments('A-1', comment_id=123, save=True)      → handle 'f1'
+add_comment('B-5', content=<copied text>, attachments=['f1'])
+```
+
+Files keep their original names, so `![image][bug.png]` references in copied text still render. Pass a different `source` on the last call to copy across spaces.
+
+**Limitations:** images pasted into the Claude Desktop chat cannot be attached — the client never hands their bytes to tools. Save the image to Downloads or Desktop and ask Claude to attach it from there. The stash is deleted when the server stops; anything you want to keep should be attached to a ticket or wiki page first.
 
 ### Project admin
 - `manage_project_setting` — `kind` of `category` / `issue_type` / `milestone` / `custom_field` × `action` of `add` / `update` / `delete`. Clears the metadata cache on success.
@@ -108,6 +134,8 @@ backlog_mcp/
   app.py                the FastMCP object and process entry point
   common.py             sentinels shared by tools (default source, "unchanged")
   fields.py             ticket-field value -> Backlog form body; mention rewriting
+  stash.py              per-run temp folder for files; local-path allowlist
+  attach.py             `attachments=[...]` -> validated, uploaded attachment ids
   api/                  everything below the tool definitions
     secrets.py          API-key redaction (security-critical — read this first)
     sources.py          source name -> configured Backlog space
@@ -122,6 +150,7 @@ backlog_mcp/
                         create_issue, update_issues, delete_issue
     comments.py         get_comments, add_comment, manage_comment
     attachments.py      get_attachments
+    files.py            manage_files
     project_settings.py manage_project_setting
     wiki.py             get_wikis, manage_wiki_page
     activity.py         get_activities, get_recently_viewed,
@@ -129,7 +158,7 @@ backlog_mcp/
     social.py           manage_watchers, add_star
 ```
 
-Each layer only imports the ones above it: `config` → `api/` → `common`/`fields` →
+Each layer only imports the ones above it: `config` → `api/`, `stash` → `common`/`fields`/`attach` →
 `app` → `tools/`. Importing `backlog_mcp` registers every tool, because each tool
 module applies `@mcp.tool()` at import time.
 
@@ -145,6 +174,12 @@ every request URL, and `requests` puts the full URL into its exception messages.
 Those messages reach the MCP client. `api/secrets.py` scrubs the key out of every
 error leaving the HTTP layer — if you add a code path that talks to Backlog
 outside `api/http.py`, scrub it there too.
+
+Ticket text can steer the model, so the file features are fenced in too: local
+files can only be read from `BACKLOG_MCP_UPLOAD_DIRS` and the stash (paths are
+fully resolved first, so `..` and symlinks cannot escape), and `manage_files`
+only fetches public `http(s)` URLs — loopback, private and link-local addresses
+are refused on every redirect hop.
 
 ## License
 
