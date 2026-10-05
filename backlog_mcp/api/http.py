@@ -5,6 +5,7 @@ API-key redaction in `.secrets` airtight — see `_request` for the details.
 """
 
 import time
+from contextlib import contextmanager
 from typing import Any
 
 import requests
@@ -116,6 +117,55 @@ def delete(source: str, endpoint: str, params: dict = None) -> Any:
     cfg = source_config(source)
     p = list((params or {}).items()) + [("apiKey", cfg["api_key"])]
     return _request("DELETE", f"{cfg['base_url']}{endpoint}", params=p).json()
+
+
+def upload(source: str, name: str, data: bytes, mime: str = "") -> dict:
+    """Stage a file in the space with POST /space/attachment.
+
+    This alone changes nothing visible in Backlog — no comment, no history
+    entry. The returned id is linked by passing it as `attachmentId[]` to the
+    issue / comment / wiki request that should carry the file.
+
+    `data` is bytes rather than a file object so a 429 retry can resend it.
+
+    Input:
+        source: Source name — the space the file will be attached in.
+        name: Filename Backlog stores (and inline-image references match on).
+        data: File contents.
+        mime: Content type. Blank = application/octet-stream.
+    Output:
+        {'id', 'name', 'size'} — `id` is single-use.
+    """
+    return post(source, "/space/attachment",
+                files={"file": (name, data, mime or "application/octet-stream")})
+
+
+def _scrubbed_chunks(r: requests.Response, size: int = 1 << 16):
+    """Iterate a streamed body, scrubbing any mid-transfer network error."""
+    try:
+        yield from r.iter_content(size)
+    except requests.exceptions.RequestException as e:
+        raise scrubbed_error(e) from None
+
+
+@contextmanager
+def stream(source: str, endpoint: str):
+    """GET a binary resource without loading it into memory.
+
+    Input:
+        source: Source name. Empty = default source.
+        endpoint: Attachment path, e.g. '/issues/KEY-1/attachments/99'.
+    Output (as context manager):
+        (Content-Type header value, iterator of byte chunks). The connection is
+        closed when the block exits.
+    """
+    cfg = source_config(source)
+    r = _request("GET", f"{cfg['base_url']}{endpoint}",
+                 params=[("apiKey", cfg["api_key"])], stream=True)
+    try:
+        yield r.headers.get("Content-Type", "application/octet-stream"), _scrubbed_chunks(r)
+    finally:
+        r.close()
 
 
 def get_raw(source: str, endpoint: str) -> tuple[bytes, str]:

@@ -11,6 +11,7 @@ Set DEFAULT_SOURCE=<name> to control which source is used when source="" is pass
 
 import os
 import re
+import tempfile
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -37,3 +38,37 @@ def _build_sources() -> dict[str, dict]:
 
 SOURCES: dict[str, dict] = _build_sources()
 DEFAULT_SOURCE: str = os.environ.get("DEFAULT_SOURCE", next(iter(SOURCES), "")).lower()
+
+
+# ── Local file handling ──────────────────────────────────────────────────────
+# See backlog_mcp/stash.py. Every value can be overridden from .env.
+
+def _float_env(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+
+
+def _upload_dirs() -> list[str]:
+    """Folders a caller may hand files in from, besides the stash itself.
+
+    BACKLOG_MCP_UPLOAD_DIRS is a os.pathsep-separated list (';' on Windows).
+    Default: the user's Downloads and Desktop, including a OneDrive-redirected
+    Desktop when one exists.
+    """
+    raw = os.environ.get("BACKLOG_MCP_UPLOAD_DIRS", "").strip()
+    if raw:
+        dirs = [os.path.expanduser(d.strip()) for d in raw.split(os.pathsep) if d.strip()]
+    else:
+        home = os.path.expanduser("~")
+        dirs = [os.path.join(home, "Downloads"), os.path.join(home, "Desktop"),
+                os.path.join(home, "OneDrive", "Desktop")]
+    return [d for d in dirs if os.path.isdir(d)]
+
+
+TEMP_ROOT: str = (os.environ.get("BACKLOG_MCP_TEMP_DIR", "").strip()
+                  or os.path.join(tempfile.gettempdir(), "backlog-mcp"))
+MAX_FILE_MB: float = _float_env("BACKLOG_MCP_MAX_FILE_MB", 50)
+STASH_MAX_MB: float = _float_env("BACKLOG_MCP_STASH_MAX_MB", 500)
+UPLOAD_DIRS: list[str] = _upload_dirs()

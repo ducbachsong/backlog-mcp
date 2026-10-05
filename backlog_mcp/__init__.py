@@ -4,8 +4,10 @@ Layering (each layer only imports the ones above it):
 
     config      — declares the Backlog spaces ("sources") read from .env
     api/        — HTTP client, caching, name -> id resolution
-    common,     — sentinels shared by tools; ticket-field body building
-    fields
+    stash       — per-run temp folder for files; local-path allowlist
+    common,     — sentinels shared by tools; ticket-field body building;
+    fields,       attachment refs -> uploaded ids
+    attach
     app         — the FastMCP object
     tools/      — the MCP tools themselves
 

@@ -7,7 +7,7 @@
 from typing import Optional
 
 from ..app import mcp
-from .. import api
+from .. import api, attach
 from ..common import D
 from ..common import KEEP, normalize_keys
 from ..fields import build_issue_fields, apply_mentions, issue_filter_ids
@@ -184,9 +184,11 @@ def create_issue(
     actual_hours: float = KEEP,
     parent_issue_id: int = 0,
     mention_user_ids: Optional[list[int]] = None,
+    attachments: Optional[list[str]] = None,
+    embed_images: bool = True,
 ) -> dict:
-    """Create a new issue, setting every field in one request.
-    ⚠️ CONFIRM WITH USER before calling — show the issue details first.
+    """Create a new issue, setting every field (and attaching files) in one request.
+    ⚠️ CONFIRM WITH USER before calling — show the issue details and files first.
     Workflow: get_project_metadata → confirm → create_issue.
 
     Args:
@@ -206,12 +208,21 @@ def create_issue(
         actual_hours: 実績時間 in hours. Omit to leave unset.
         parent_issue_id: Numeric id of the parent issue to file this under as a sub-task.
         mention_user_ids: User ids to notify about the new issue (bell + email).
+        attachments: Files to attach — stash handles ('f1', from get_attachments
+                     save=True or manage_files) and/or local file paths inside the
+                     upload allowlist.
+        embed_images: True (default) = image files not already referenced in the
+                      description are appended to it as inline images.
 
     Returns:
-        dict: the created issue as returned by Backlog (id, issueKey, summary, ...),
-        or {'error': message, ...} when a field name could not be resolved.
+        dict: the created issue as returned by Backlog (id, issueKey, summary,
+        attachments, ...), or {'error': message, ...} when a field name could not
+        be resolved or a file ref is bad (nothing is created then).
     """
     try:
+        files = attach.prepare(attachments)
+        if files and embed_images:
+            description = attach.embed_images(source, description, files)
         data = build_issue_fields(
             source, summary=summary, description=description, issue_type=issue_type,
             priority=priority, assignee=assignee, milestone=milestone, category=category,
@@ -235,6 +246,8 @@ def create_issue(
     ids = [int(u) for u in (mention_user_ids or []) if u]
     if ids:
         data["notifiedUserId[]"] = ids
+    if files:
+        data["attachmentId[]"] = attach.upload(source, files)
     return api.post(source, "/issues", data)
 
 
@@ -260,10 +273,13 @@ def update_issues(
     comment: str = "",
     mention_user_ids: Optional[list[int]] = None,
     clear_fields: str = "",
+    attachments: Optional[list[str]] = None,
+    embed_images: bool = True,
 ) -> dict:
     """Update any combination of ticket fields on one or many issues — the single
     write tool for 状態 / 担当者 / 優先度 / マイルストーン / カテゴリー / 発生バージョン /
-    開始日 / 期限日 / 予定時間 / 実績時間 / 完了理由, plus an optional comment and mention.
+    開始日 / 期限日 / 予定時間 / 実績時間 / 完了理由, plus an optional comment, mention
+    and attached files.
 
     Everything you pass is sent in ONE request per issue, so the Backlog change
     history (課題の変更履歴) gets a single entry. Do not call this repeatedly to
@@ -300,10 +316,16 @@ def update_issues(
         clear_fields: Comma-separated fields to blank out instead of setting:
                       assignee, resolution, start_date, due_date, estimated_hours,
                       actual_hours, category, milestone, version.
+        attachments: Files to attach to every listed issue — stash handles ('f1')
+                     and/or local file paths inside the upload allowlist.
+        embed_images: True (default) = image files not already referenced in
+                      `comment` are appended to it as inline images (a comment is
+                      then posted even if none was given).
 
     Returns:
         dict: {'updated': int, 'failed': int, 'fields': [changed Backlog params],
                'notified': [user names] (only when mention_user_ids was used),
+               'attached': [file names] (only when attachments were given),
                'issues': [slim issue dicts for the successes],
                'failures': {issue key: error message}}.
     """
@@ -312,6 +334,7 @@ def update_issues(
         return {"error": "issue_keys is required"}
 
     try:
+        files = attach.prepare(attachments)
         data = build_issue_fields(
             source, summary=summary, description=description, status=status,
             assignee=assignee, priority=priority, issue_type=issue_type,
@@ -323,6 +346,8 @@ def update_issues(
     except ValueError as e:
         return {"error": str(e)}
 
+    if files and embed_images:
+        comment = attach.embed_images(source, comment, files)
     body, ids, err = apply_mentions(source, comment, mention_user_ids)
     if err:
         return err
@@ -331,10 +356,16 @@ def update_issues(
     if ids:
         data["notifiedUserId[]"] = ids
 
-    if not data:
-        return {"error": "Nothing to update — pass at least one field, a comment, or clear_fields"}
+    if not data and not files:
+        return {"error": "Nothing to update — pass at least one field, a comment, "
+                         "attachments, or clear_fields"}
 
-    results = api.run_parallel(keys, lambda k: api.patch(source, f"/issues/{k}", data))
+    def _update(k):
+        # Backlog attachment ids are single-use, so each issue gets its own upload.
+        body = dict(data, **{"attachmentId[]": attach.upload(source, files)}) if files else data
+        return api.patch(source, f"/issues/{k}", body)
+
+    results = api.run_parallel(keys, _update)
     ok      = [k for k in keys if "error" not in (results.get(k) or {"error": "not run"})]
     failed  = {k: results[k]["error"] for k in keys
                if isinstance(results.get(k), dict) and "error" in results[k]}
@@ -346,6 +377,8 @@ def update_issues(
         "issues":   [api.slim_issue(results[k]) for k in ok],
         "failures": failed,
     }
+    if files:
+        out["attached"] = attach.names(files)
     if ids:
         users = api.meta(source, "users")
         by_id = {u["id"]: u["name"] for u in users}

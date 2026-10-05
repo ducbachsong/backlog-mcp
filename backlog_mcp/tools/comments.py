@@ -7,7 +7,7 @@ request as the comment itself.
 from typing import Optional
 
 from ..app import mcp
-from .. import api
+from .. import api, attach
 from ..common import D
 from ..common import KEEP, normalize_keys
 from ..fields import build_issue_fields, apply_mentions
@@ -24,6 +24,9 @@ def get_comments(issue_keys: list[str], source: str = D, last_n: int = 0) -> dic
                 N > 0 = only the N newest comments per issue, slimmed
                 (id / author / created / body truncated to 300 chars).
 
+    Every comment that attached files carries 'attachments': [{'id', 'name'}] —
+    pass the comment id to get_attachments(comment_id=..., save=True) to copy them.
+
     Returns:
         dict: {'total': number of issues, 'comments': {issue key: [comments]}}.
         A failed key maps to {'error': message}.
@@ -39,6 +42,10 @@ def get_comments(issue_keys: list[str], source: str = D, last_n: int = 0) -> dic
         fetch = lambda k: api.fetch_all_comments(source, k)
 
     results = api.run_parallel(keys, fetch)
+    if not last_n:
+        for thread in results.values():
+            for c in thread if isinstance(thread, list) else []:
+                c["attachments"] = api.comment_attachments(c)
     return {"total": len(keys), "comments": {k: results.get(k, []) for k in keys}}
 
 
@@ -60,6 +67,8 @@ def add_comment(
     estimated_hours: float = KEEP,
     actual_hours: float = KEEP,
     clear_fields: str = "",
+    attachments: Optional[list[str]] = None,
+    embed_images: bool = True,
 ) -> dict:
     """Post a comment on an issue, optionally mentioning users AND changing ticket
     fields in the very same request.
@@ -72,7 +81,13 @@ def add_comment(
     開始日 / 期限日 / 予定時間 / 実績時間 / 完了理由 given here are applied together with
     the comment in one PATCH, so 課題の変更履歴 records a single entry instead of one
     per field. With no field arguments this is a plain comment POST.
-    ⚠️ CONFIRM WITH USER — show the comment, the field changes and who gets notified.
+
+    Files: `attachments` are attached by the same comment. To copy a comment
+    with its images from another ticket: get_comments → get_attachments(
+    comment_id=..., save=True) → add_comment(content=<copied text>,
+    attachments=[handles]).
+    ⚠️ CONFIRM WITH USER — show the comment, the files, the field changes and who
+    gets notified.
 
     Args:
         issue_key: Issue key, e.g. 'PROJECT-123'.
@@ -93,17 +108,29 @@ def add_comment(
         estimated_hours: 予定時間 in hours.
         actual_hours: 実績時間 in hours.
         clear_fields: Comma-separated fields to blank out — see update_issues.
+        attachments: Files to attach — stash handles ('f1', from get_attachments
+                     save=True or manage_files) and/or local file paths inside the
+                     upload allowlist.
+        embed_images: True (default) = image files not already referenced in
+                      the text are appended as inline images, so they show in
+                      the comment instead of only in the file list.
 
     Returns:
         dict: {'issueKey', 'commentId', 'content': the posted body,
-               'notified': [user names], 'fieldsChanged': [Backlog params]}.
+               'notified': [user names], 'fieldsChanged': [Backlog params],
+               'attached': [file names]}.
         'commentId' is null when field changes were included, because Backlog's
         update endpoint returns the issue rather than the new comment — read it
         back with get_comments if you need the id.
-        Returns {'error': ...} if a name cannot be resolved or a mentioned user
-        is not a project member (the error then lists the valid members).
+        Returns {'error': ...} if a name cannot be resolved, a file ref is bad,
+        or a mentioned user is not a project member (the error then lists the
+        valid members). Nothing is posted in that case.
     """
-    if not content and not mention_user_ids:
+    try:
+        files = attach.prepare(attachments)
+    except ValueError as e:
+        return {"error": str(e)}
+    if not content and not mention_user_ids and not files:
         return {"error": "content is required"}
 
     try:
@@ -117,15 +144,20 @@ def add_comment(
     except ValueError as e:
         return {"error": str(e)}
 
+    if files and embed_images:
+        content = attach.embed_images(source, content, files)
     body, ids, err = apply_mentions(source, content, mention_user_ids)
     if err:
         return err
+    file_ids = attach.upload(source, files) if files else []
 
     if fields:
         # One PATCH carries the comment, the mention and every field change.
         data = dict(fields, comment=body)
         if ids:
             data["notifiedUserId[]"] = ids
+        if file_ids:
+            data["attachmentId[]"] = file_ids
         res = api.patch(source, f"/issues/{issue_key}", data)
         posted = (res.get("comment") or {}) if isinstance(res.get("comment"), dict) else {}
         comment_id = posted.get("id")
@@ -133,6 +165,8 @@ def add_comment(
         data = {"content": body}
         if ids:
             data["notifiedUserId[]"] = ids
+        if file_ids:
+            data["attachmentId[]"] = file_ids
         res = api.post(source, f"/issues/{issue_key}/comments", data)
         comment_id = res.get("id")
 
@@ -143,6 +177,7 @@ def add_comment(
         "content":       body,
         "notified":      [by_id.get(i, i) for i in ids],
         "fieldsChanged": list(fields.keys()),
+        "attached":      attach.names(files),
     }
 
 
