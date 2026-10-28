@@ -7,6 +7,7 @@ request as the comment itself.
 from typing import Optional
 
 from ..app import mcp
+from ..batch import batch
 from .. import api, attach
 from ..common import D
 from ..common import KEEP, normalize_keys
@@ -14,6 +15,7 @@ from ..fields import build_issue_fields, apply_mentions
 
 
 @mcp.tool()
+@batch(parallel=True)
 def get_comments(issue_keys: list[str], source: str = D, last_n: int = 0) -> dict:
     """Read comments of one or many issues. Several issues are fetched in parallel.
 
@@ -50,6 +52,7 @@ def get_comments(issue_keys: list[str], source: str = D, last_n: int = 0) -> dic
 
 
 @mcp.tool()
+@batch(parallel=False)
 def add_comment(
     issue_key: str,
     content: str,
@@ -182,6 +185,7 @@ def add_comment(
 
 
 @mcp.tool()
+@batch(parallel=False)
 def manage_comment(issue_key: str, comment_id: int, action: str, content: str = "", source: str = D) -> dict:
     """Edit or delete an existing comment on an issue.
     ⚠️ CONFIRM WITH USER — deleting a comment is IRREVERSIBLE.

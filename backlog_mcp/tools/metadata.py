@@ -2,6 +2,7 @@
 
 from .. import config
 from ..app import mcp
+from ..batch import batch
 from .. import api
 from ..common import D
 
@@ -32,6 +33,7 @@ _META_KINDS = ["project", "statuses", "users", "issue_types", "categories",
 
 
 @mcp.tool()
+@batch(parallel=True)
 def get_project_metadata(source: str = D, kinds: str = "all", include_archived: bool = False) -> dict:
     """Get the project's lookup lists — statuses, members, priorities, and more.
     Call this before creating or updating issues to learn the valid values.

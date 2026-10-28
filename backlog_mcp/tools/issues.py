@@ -7,6 +7,7 @@
 from typing import Optional
 
 from ..app import mcp
+from ..batch import batch
 from .. import api, attach
 from ..common import D
 from ..common import KEEP, normalize_keys
@@ -14,6 +15,7 @@ from ..fields import build_issue_fields, apply_mentions, issue_filter_ids
 
 
 @mcp.tool()
+@batch(parallel=True)
 def get_issues(
     source: str = D,
     status: str = "all",
@@ -99,6 +101,7 @@ def get_issues(
 
 
 @mcp.tool()
+@batch(parallel=True)
 def get_issue(issue_keys: list[str], source: str = D, full: bool = True) -> dict:
     """Get one or many issues by key. Multiple keys are fetched in parallel and
     returned in input order — always prefer one call with N keys over N calls.
@@ -130,6 +133,7 @@ def get_issue(issue_keys: list[str], source: str = D, full: bool = True) -> dict
 
 
 @mcp.tool()
+@batch(parallel=True)
 def get_related_issues(issue_key: str, source: str = D, relation: str = "children") -> dict:
     """Walk the parent/child (sub-task) relationship of an issue.
 
@@ -168,6 +172,7 @@ def get_related_issues(issue_key: str, source: str = D, relation: str = "childre
 
 
 @mcp.tool()
+@batch(parallel=False)
 def create_issue(
     source: str,
     summary: str,
@@ -252,6 +257,7 @@ def create_issue(
 
 
 @mcp.tool()
+@batch(parallel=False)
 def update_issues(
     issue_keys: list[str],
     source: str = D,
@@ -387,6 +393,7 @@ def update_issues(
 
 
 @mcp.tool()
+@batch(parallel=False)
 def delete_issue(issue_keys: list[str], source: str = D) -> dict:
     """Delete one or more Backlog issues permanently.
     ⚠️ IRREVERSIBLE — confirm with user before calling.

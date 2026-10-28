@@ -3,11 +3,13 @@
 from typing import Any, Optional
 
 from ..app import mcp
+from ..batch import batch
 from .. import api, attach
 from ..common import D
 
 
 @mcp.tool()
+@batch(parallel=True)
 def get_wikis(source: str = D, wiki_id: int = 0, keyword: str = "", count_only: bool = False) -> Any:
     """List the project's wiki pages, read one page in full, or just count them.
 
@@ -43,6 +45,7 @@ def _attach_to_wiki(source: str, wiki_id: int, files) -> list:
 
 
 @mcp.tool()
+@batch(parallel=False)
 def manage_wiki_page(
     action: str,
     source: str = D,

@@ -18,6 +18,7 @@ from urllib.parse import unquote, urljoin, urlparse
 import requests
 
 from ..app import mcp
+from ..batch import batch
 from .. import stash
 from ..api import scrub_secrets
 from .attachments import _decode_attachment
@@ -121,6 +122,7 @@ def _list_dir(folder: str, limit: int) -> dict:
 
 
 @mcp.tool()
+@batch(parallel=False)
 def manage_files(
     action: str,
     handle: str = "",

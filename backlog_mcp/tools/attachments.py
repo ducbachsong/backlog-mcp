@@ -5,6 +5,7 @@ import base64
 from mcp import types as mcp_types
 
 from ..app import mcp
+from ..batch import batch
 from .. import api, config, stash
 from ..common import D
 
@@ -54,6 +55,7 @@ def _save_one(source: str, base: str, att: dict, origin: dict) -> dict:
 
 
 @mcp.tool()
+@batch(parallel=True)
 def get_attachments(
     target: str,
     source: str = D,

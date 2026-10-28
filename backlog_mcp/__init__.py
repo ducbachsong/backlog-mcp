@@ -6,8 +6,9 @@ Layering (each layer only imports the ones above it):
     api/        — HTTP client, caching, name -> id resolution
     stash       — per-run temp folder for files; local-path allowlist
     common,     — sentinels shared by tools; ticket-field body building;
-    fields,       attachment refs -> uploaded ids
-    attach
+    fields,       attachment refs -> uploaded ids; the `items` batch mode
+    attach,       every tool gets
+    batch
     app         — the FastMCP object
     tools/      — the MCP tools themselves
 

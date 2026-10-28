@@ -7,11 +7,13 @@ the current user's own reading history.
 from typing import Any
 
 from ..app import mcp
+from ..batch import batch
 from .. import api
 from ..common import D
 
 
 @mcp.tool()
+@batch(parallel=True)
 def get_activities(
     source: str = D,
     scope: str = "project",
@@ -59,6 +61,7 @@ def get_activities(
 
 
 @mcp.tool()
+@batch(parallel=True)
 def get_recently_viewed(source: str = D, kind: str = "issues", count: int = 20) -> list:
     """Get what the authenticated user looked at most recently — handy for
     "the ticket I was just on" without knowing its key.
@@ -81,6 +84,7 @@ def get_recently_viewed(source: str = D, kind: str = "issues", count: int = 20) 
 
 
 @mcp.tool()
+@batch(parallel=True)
 def get_notifications(
     source: str = D,
     already_read: bool = False,
@@ -112,6 +116,7 @@ def get_notifications(
 
 
 @mcp.tool()
+@batch(parallel=False)
 def mark_notifications_read(source: str = D, notification_id: int = 0) -> dict:
     """Mark one notification — or every notification — as read.
 

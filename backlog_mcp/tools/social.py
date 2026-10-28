@@ -3,11 +3,13 @@
 from typing import Any
 
 from ..app import mcp
+from ..batch import batch
 from .. import api
 from ..common import D
 
 
 @mcp.tool()
+@batch(parallel=False)
 def manage_watchers(issue_key: str, source: str = D, action: str = "list", user_id: int = 0) -> Any:
     """List, add or remove the users watching an issue.
 
@@ -34,6 +36,7 @@ def manage_watchers(issue_key: str, source: str = D, action: str = "list", user_
 
 
 @mcp.tool()
+@batch(parallel=False)
 def add_star(
     source: str = D,
     issue_id: int = 0,

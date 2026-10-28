@@ -11,7 +11,8 @@ An [MCP](https://modelcontextprotocol.io) server that exposes [Backlog](https://
 - **Real mentions** — passing `mention_user_ids` posts a comment that renders as a highlighted `@Name` mention *and* triggers a real Backlog notification (bell + email), matching what you get from typing `@` in the Backlog UI. Plain `@Name` text does neither.
 - **Attachments on every write** — `add_comment`, `create_issue`, `update_issues` and `manage_wiki_page` take `attachments=[...]`; files go up in the same request as the rest of the change, and images are referenced inline so they show in the body, not just the file list.
 - **Local file stash** — files read from Backlog, fetched from the web, or written by Claude are kept in a per-session temp folder under short handles (`f1`, `f2`…). Copying a comment with its screenshots to another ticket — even in another space — never pushes the image bytes through the conversation.
-- Parallel fetching and updating for bulk operations (`get_issue`, `get_comments`, `update_issues`, `delete_issue` all accept a list of keys).
+- **Batch mode on every tool** — every tool except `get_sources` takes `items=[{...}, {...}]`, one argument object per call, and answers with all results at once, so N operations cost one MCP round trip instead of N. See [Batch mode](#batch-mode).
+- Parallel fetching and updating for bulk operations (`get_issue`, `get_comments`, `update_issues`, `delete_issue` also accept a list of keys directly).
 - Read-only tools require no confirmation; every create/update/delete tool is marked in its docstring for the client to confirm with the user before calling.
 
 ## Setup
@@ -72,6 +73,23 @@ Copy [`claude_desktop_config.example.json`](claude_desktop_config.example.json) 
 Your filled-in `claude_desktop_config.json` is machine-specific and contains live credentials — keep it out of version control (already covered by `.gitignore`).
 
 ## Tools
+
+### Batch mode
+
+Every tool except `get_sources` accepts an optional `items` argument: a list of up to 50 objects, each holding that tool's own arguments for one call. Arguments given at top level are defaults shared by every item.
+
+```
+add_comment(items=[{'issue_key': 'A-1', 'content': 'Fixed in v2'},
+                   {'issue_key': 'A-7', 'content': 'Duplicate of A-1'}])
+
+update_issues(status='Closed', items=[{'issue_keys': ['A-1'], 'resolution': 'Fixed'},
+                                      {'issue_keys': ['A-7'], 'resolution': 'Duplicate'}])
+
+get_issues(count_only=True, items=[{'status': 'open'}, {'status': 'in_progress'},
+                                   {'status': 'closed'}])
+```
+
+A batch returns `{'total', 'failed', 'results': [...]}`, with one result per item in input order. Each result looks exactly like the single-call result would. A failing item becomes `{'error': ...}` in its slot and does not stop the others. Read tools run their items concurrently. Tools that write run them one at a time, in order, so comments land in the sequence they were given. Images returned by `get_attachments` / `manage_files(action='view')` are sent as viewable image blocks after the JSON, and each one's slot says `{'image': n}`.
 
 ### Discovery & metadata
 - `get_sources` — list the configured Backlog spaces.

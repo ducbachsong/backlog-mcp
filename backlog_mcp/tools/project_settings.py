@@ -5,11 +5,13 @@ tool because they share one shape: add / update / delete a named item.
 """
 
 from ..app import mcp
+from ..batch import batch
 from .. import api
 from ..common import D
 
 
 @mcp.tool()
+@batch(parallel=False)
 def manage_project_setting(
     kind: str,
     action: str,
